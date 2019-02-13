@@ -66,7 +66,6 @@ namespace PhotoFiddler.Helpers
                     httpClient
                         .PostAsync(apiEndPointPost, content);
 
-                Console.WriteLine(responseMessage);
 
                 if (responseMessage.IsSuccessStatusCode)
                 {
