@@ -15,47 +15,52 @@ using Microsoft.Extensions.Options;
 
 namespace PhotoFiddler.Helpers
 {
-    public class PhotoProcessor :IPhotoProcessor
-    {
-        private readonly PhotoApiSettings _photoApiSettings;
-          public PhotoProcessor(IOptions<PhotoApiSettings> photoApiSettings)
+    public class PhotoProcessor : IPhotoProcessor
+    { private readonly PhotoApiSettings _photoApiSettings;
+        public PhotoProcessor(IOptions<PhotoApiSettings> photoApiSettings)
         {
             _photoApiSettings = photoApiSettings.Value;
         }
-        
         public async Task<string> Process(string incomingImageUrl, string sid, string host)
         {
-            var imageLocation = SaveImageLocally(incomingImageUrl, sid);
+            var imageLocation = await SaveImageLocallytest(incomingImageUrl, sid);
 
-            var privateKey = _photoApiSettings.PrivateKey;
-            var appId = _photoApiSettings.AppId;
-         
+            var imageUrl = host + imageLocation;
 
-            string imageUrl = string.Empty;
+            var processedImageUrl = await GetProcessedImage(imageUrl);
+
+            Console.WriteLine(processedImageUrl);
+
+            return processedImageUrl;
+        }
+
+        private async Task<string> GetProcessedImage(string imageUrl)
+        {
+            string processedImageUrl = string.Empty;
+
             using (var httpClient = new HttpClient())
             {
                 var apiEndPointPost = "http://opeapi.ws.pho.to/addtask";
                 var apiEndPointGet = "http://opeapi.ws.pho.to/getresult?request_id=";
                 string requestId = "";
-                var localImageStore = host + imageLocation;
 
                 httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xml"));
 
                 string xmlMessage = $@"<image_process_call>
-                                      <image_url>{localImageStore}</image_url>
+                                      <image_url>{imageUrl}</image_url>
                                     <methods_list>
                                         <method>
                                             <name>caricature</name>
-                                            <params>type=13</params>
+                                            <params>type=10</params>
                                         </method>
                                     </methods_list>
                                 </image_process_call>";
 
-                var key = Encoding.ASCII.GetBytes(privateKey);
+                var key = Encoding.ASCII.GetBytes(_photoApiSettings.PrivateKey);
                 var keySha = EncodeKey(xmlMessage, key);
                 var values = new Dictionary<string, string>
                     {
-                        { "app_id", appId },
+                        { "app_id", _photoApiSettings.AppId },
                         { "sign_data", keySha },
                         {"data", xmlMessage}
                     };
@@ -66,7 +71,6 @@ namespace PhotoFiddler.Helpers
                     httpClient
                         .PostAsync(apiEndPointPost, content);
 
-
                 if (responseMessage.IsSuccessStatusCode)
                 {
                     var response = await responseMessage.Content.ReadAsStringAsync();
@@ -75,8 +79,9 @@ namespace PhotoFiddler.Helpers
                     requestId = xml?.Value;
                 }
 
+
                 string status;
-               
+
                 int i = 0;
                 do
                 {
@@ -84,16 +89,16 @@ namespace PhotoFiddler.Helpers
                     var url = apiEndPointGet + requestId;
                     var responseGet = await httpClient.GetAsync(url);
                     var contentString = await responseGet.Content.ReadAsStringAsync();
-                    
+
                     var xmlGet = XElement.Parse(contentString).Descendants();
                     var xmlStatus = xmlGet.FirstOrDefault(x => x.Name == "status");
                     status = xmlStatus?.Value;
                     ++i;
 
-                    if(status == "OK")
+                    if (status == "OK")
                     {
                         var xmlUrl = xmlGet.FirstOrDefault(x => x.Name == "result_url");
-                        imageUrl = xmlUrl?.Value ?? "empty node";
+                        processedImageUrl = xmlUrl?.Value ?? "empty node";
                     }
                 }
                 while (i < 10 && status == "InProgress");
@@ -105,51 +110,47 @@ namespace PhotoFiddler.Helpers
                 }
 
             }
-            return imageUrl;
+
+            return processedImageUrl;
+
         }
 
-        private string SaveImageLocally(string imageUrl, string sid)
-        {
-            Console.WriteLine();
-            var root = "/wwwroot";
-            var slug = $@"/images/{sid}.jpg";
-            string saveLocation = Environment.CurrentDirectory + root + slug;
-
-            byte[] imageBytes;
-            HttpWebRequest imageRequest = (HttpWebRequest)WebRequest.Create(imageUrl);
-            WebResponse imageResponse = imageRequest.GetResponse();
-
-            Stream responseStream = imageResponse.GetResponseStream();
-
-            using (BinaryReader br = new BinaryReader(responseStream ))
-            {
-                imageBytes = br.ReadBytes(500000);
-                br.Close();
-            }
-            responseStream.Close();
-            imageResponse.Close();
-
-            FileStream fs = new FileStream(saveLocation, FileMode.Create);
-            BinaryWriter bw = new BinaryWriter(fs);
-            try
-            {
-                bw.Write(imageBytes);
-            }
-            finally
-            {
-                fs.Close();
-                bw.Close();
-            }
-            return slug;
-        }
-//https://stackoverflow.com/questions/6067751/how-to-generate-hmac-sha1-in-c
         private string EncodeKey(string input, byte[] key)
         {
-            HMACSHA1 myhmacsha1 = new HMACSHA1(key);
-            byte[] byteArray = Encoding.ASCII.GetBytes(input);
-            MemoryStream stream = new MemoryStream(byteArray);
-            return myhmacsha1.ComputeHash(stream).Aggregate("", (s, e) => s + String.Format("{0:x2}", e), s => s);
+            var encodedKey = new HMACSHA1(key);
+            var byteArray = Encoding.ASCII.GetBytes(input);
+            var stream = new MemoryStream(byteArray);
+            return encodedKey.ComputeHash(stream).Aggregate("", (s, e) => s + String.Format("{0:x2}", e), s => s);
         }
+
+        private async Task<string> SaveImageLocallytest(string imageUrl, string sid)
+        {
+            var root = "/wwwroot";
+            var dir = "/images/";
+            var filename = $"{sid}.jpg";
+            var path = Environment.CurrentDirectory + root + dir;
+            var saveLocation = path + filename;
+            var rootLocation = dir + filename;
+
+            if (!Directory.Exists(path))
+            {
+                var di = Directory.CreateDirectory(path);
+            }
+
+            using (var httpClient = new HttpClient())
+            {
+                byte[] imageBytes = await
+                    httpClient
+                        .GetByteArrayAsync(imageUrl);
+                FileStream fs = new FileStream(saveLocation, FileMode.Create);
+                BinaryWriter bw = new BinaryWriter(fs);
+                bw.Write(imageBytes);
+            }
+
+            return rootLocation;
+        }
+
+
     }
 }
 
